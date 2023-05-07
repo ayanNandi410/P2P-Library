@@ -1,16 +1,21 @@
 import socket, threading
 from constants import SERVER_PORT, SERVER_IP, HEADER,FORMAT
+from fileIO import convert_to_string, create_file
 
+# defines the operations for an instance of Client
 class Client:
 
+    # method called on creating an instance of Client
+    # makes call to start which initializes the client
     def __init__(self,id,ip,data):
         self.id = id
         self.ip = ip
         self.dataset = data
-        self.s = None
-        self.peer = None
+        self.s = None   # socket to interact with server
+        self.peer = None    # socket to interact with peer
         self.running = True
         self.start()
+        exit(0)
 
     def start(self):
 
@@ -26,19 +31,30 @@ class Client:
             # connect with server
             self.make_connection()
 
+            # thread to start listening to peer reqeusts for fetching books, using serve_book method
             peer_thread = threading.Thread(target=self.serve_book,args=())
             peer_thread.start()
 
             while True:
 
                 print("\nOperations:\n 1. Register\n 2. Query Book\n 3. Deregister\n 4. Quit\n")
-                choice = int(input("(Enter choice):"))
+                choice = input("(Enter choice):") # stores which operation to perform
+                
+                while choice == '':
+                    print("Please enter some input...\n")
+                    choice = input("(Enter choice):")
+
+                try:
+                    choice = int(choice)
+                except Exception as e:
+                    print("\nPlease enter some number...\n")
+                    continue
 
                 if choice not in [1,2,3]:
                     if choice == 4:
                         break
                     else:
-                        print("Invalid input! Try again...")
+                        print("Invalid choice! Try again...")
                         continue
                 else:
                     if choice == 1:
@@ -52,20 +68,16 @@ class Client:
                         print("Try again...")
                         continue
 
-
-            #self.s.send("y:00002,Phantom1\n")
-
             self.running = False
-
             self.close_connection()
 
         except ConnectionRefusedError:
             print("[ERROR] Server not running...")
             exit(1)
-        #except Exception as e:
-        #   print("[ERROR] "+repr(e))
-        #   exit(1)
-        
+        except Exception as e:
+           print("[ERROR] "+repr(e))
+
+    # start connection with server
     def make_connection(self):
         self.s.connect((SERVER_IP,SERVER_PORT))
         print ("[SERVER] "+self.s.recv(HEADER).decode(FORMAT))
@@ -73,10 +85,11 @@ class Client:
         # start listening for book requests
         try:
             self.peer = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            print ("---Socket successfully created for client (Peer connection) ---")
+            self.peer.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            print ("--- Socket successfully created for Peer connection ---")
         except socket.error as err:
             self.peer = None
-            print ("---Socket Creation failed with Error : %s" %(err))
+            print ("--- Socket Creation failed with Error : %s" %(err)+" ---")
             exit(1)
 
     def close_connection(self):
@@ -93,7 +106,7 @@ class Client:
 
         # checking whether client itself has the book
         if name in self.dataset:
-            print("Present in own Database\n")
+            print("Present in own Database. Check myBooks folder.\n")
             return
 
         # querying the server for the book
@@ -115,7 +128,16 @@ class Client:
                 sckt.send(msg.encode(FORMAT))
 
                 response = sckt.recv(HEADER).decode(FORMAT)
-                print("[PEER] "+response)
+
+                if response == "\0":
+                    print("[SERVER] Book not found by Peer")
+                else:
+                    res = create_file(response[2:],name)
+                    if not res:
+                        print(" --- Could not create file --- ")
+                    else:
+                        print("[PEER] Book Received. Check recBooks folder...")
+                
 
             except ConnectionRefusedError:
                 print("[ERROR] Peer not listening...")
@@ -125,23 +147,28 @@ class Client:
             #   return  
 
     def serve_book(self):
-        address = self.s.getsockname()
-        print(address)
+        address = self.s.getsockname() # get own address
         self.peer.bind(address)
-        self.peer.listen(10)
-        print("Listening for connections on "+str(self.id)+","+str(self.peer.getsockname()[1])+" ---")
+        self.peer.listen(1)
+        print("\n --- Listening for connections from peers ---")
         
         while self.running:
             c, addr = self.peer.accept()
-            print(" Accepted connection from "+str(addr)+" ---")
+            print("\n Accepted connection from "+str(addr)+" ---")
 
             message = c.recv(HEADER).decode(FORMAT)
 
             if message[:2] == "s:":
-                book_name = "Book: "+message[2:-1]
+                book_name = message[2:-1]
+                bookMsg = convert_to_string(book_name)
+
+                if bookMsg == False:
+                    response = "\0"
+                else:
+                    response = "b:" + bookMsg
                 
                 # send book back
-                c.send(book_name.encode(FORMAT))
+                c.send(response.encode(FORMAT))
 
 
     def deregister_user(self):
